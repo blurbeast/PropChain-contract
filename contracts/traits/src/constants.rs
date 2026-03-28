@@ -147,3 +147,19 @@ pub const KEY_ROTATION_EXPIRY_BLOCKS: u32 = 43_200;
 
 /// Minimum number of participants required for a valid commitment-reveal round.
 pub const MIN_RANDOMNESS_PARTICIPANTS: u32 = 2;
+// ── Validation Constants ────────────────────────────────────────────────────
+
+/// Maximum batch operation size to prevent DoS via gas exhaustion.
+pub const MAX_BATCH_SIZE: u32 = 50;
+
+/// Maximum length for reason/resolution strings.
+pub const MAX_REASON_LENGTH: u32 = 2_000;
+
+/// Maximum length for URL strings (evidence_url, metadata_url, documents_url).
+pub const MAX_URL_LENGTH: u32 = 2_048;
+
+/// Maximum pause duration in seconds (30 days).
+pub const MAX_PAUSE_DURATION: u64 = 2_592_000;
+
+/// Minimum pause duration in seconds (1 minute).
+pub const MIN_PAUSE_DURATION: u64 = 60;

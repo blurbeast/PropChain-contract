@@ -79,8 +79,20 @@ mod propchain_contracts {
         IdentityNotFound,
         /// Identity registry not configured
         IdentityRegistryNotSet,
+        /// Provided address is the zero address (all zeros)
+        ZeroAddress,
+        /// Input string exceeds maximum allowed length
+        StringTooLong,
+        /// Input string is empty when a value is required
+        StringEmpty,
+        /// Numeric value is out of acceptable bounds
+        ValueOutOfBounds,
         /// Input batch exceeds the configured max_batch_size
         BatchSizeExceeded,
+        /// Cannot transfer or approve to yourself
+        SelfTransferNotAllowed,
+        /// Range is invalid (min > max)
+        InvalidRange,
     }
 
     /// Property Registry contract
@@ -1207,6 +1219,7 @@ mod propchain_contracts {
         /// Set the oracle contract address
         #[ink(message)]
         pub fn set_oracle(&mut self, oracle: AccountId) -> Result<(), Error> {
+            Self::ensure_not_zero_address(oracle)?;
             if !self.ensure_admin_rbac() {
                 return Err(Error::Unauthorized);
             }
@@ -1223,6 +1236,9 @@ mod propchain_contracts {
         /// Set the fee manager contract address (admin only)
         #[ink(message)]
         pub fn set_fee_manager(&mut self, fee_manager: Option<AccountId>) -> Result<(), Error> {
+            if let Some(fm) = fee_manager {
+                Self::ensure_not_zero_address(fm)?;
+            }
             if !self.ensure_admin_rbac() {
                 return Err(Error::Unauthorized);
             }
@@ -1277,6 +1293,7 @@ mod propchain_contracts {
         /// Changes the admin account (only callable by current admin)
         #[ink(message)]
         pub fn change_admin(&mut self, new_admin: AccountId) -> Result<(), Error> {
+            Self::ensure_not_zero_address(new_admin)?;
             let caller = self.env().caller();
             if !self.ensure_admin_rbac() {
                 return Err(Error::Unauthorized);
@@ -1314,6 +1331,9 @@ mod propchain_contracts {
             &mut self,
             registry: Option<AccountId>,
         ) -> Result<(), Error> {
+            if let Some(r) = registry {
+                Self::ensure_not_zero_address(r)?;
+            }
             if !self.ensure_admin_rbac() {
                 return Err(Error::Unauthorized);
             }
@@ -1453,6 +1473,13 @@ mod propchain_contracts {
             reason: String,
             duration_seconds: Option<u64>,
         ) -> Result<(), Error> {
+            use propchain_traits::constants::*;
+            Self::validate_string_length(&reason, MAX_REASON_LENGTH)?;
+            if let Some(d) = duration_seconds {
+                if !(MIN_PAUSE_DURATION..=MAX_PAUSE_DURATION).contains(&d) {
+                    return Err(Error::ValueOutOfBounds);
+                }
+            }
             let caller = self.env().caller();
             let is_admin = self.access_control.has_role(caller, Role::Admin);
             let is_guardian = self.pause_guardians.get(caller).unwrap_or(false);
@@ -1611,6 +1638,7 @@ mod propchain_contracts {
             guardian: AccountId,
             is_enabled: bool,
         ) -> Result<(), Error> {
+            Self::ensure_not_zero_address(guardian)?;
             if !self.ensure_admin_rbac() {
                 return Err(Error::Unauthorized);
             }
@@ -1632,6 +1660,7 @@ mod propchain_contracts {
 
         #[ink(message)]
         pub fn grant_role(&mut self, account: AccountId, role: Role) -> Result<(), Error> {
+            Self::ensure_not_zero_address(account)?;
             let caller = self.env().caller();
             self.access_control
                 .grant_role(
@@ -1674,6 +1703,7 @@ mod propchain_contracts {
         #[ink(message)]
         pub fn register_property(&mut self, metadata: PropertyMetadata) -> Result<u64, Error> {
             self.ensure_not_paused()?;
+            Self::validate_metadata(&metadata)?;
             let caller = self.env().caller();
 
             // Check identity verification and reputation
@@ -1727,7 +1757,9 @@ mod propchain_contracts {
         #[ink(message)]
         pub fn transfer_property(&mut self, property_id: u64, to: AccountId) -> Result<(), Error> {
             self.ensure_not_paused()?;
+            Self::ensure_not_zero_address(to)?;
             let caller = self.env().caller();
+            Self::ensure_not_self(caller, to)?;
             let mut property = self
                 .properties
                 .get(property_id)
@@ -1834,10 +1866,7 @@ mod propchain_contracts {
                 return Err(Error::Unauthorized);
             }
 
-            // check if metadata is valid (basic check)
-            if metadata.location.is_empty() {
-                return Err(Error::InvalidMetadata);
-            }
+            Self::validate_metadata(&metadata)?;
 
             // Store old metadata for event
             let old_location = property.metadata.location.clone();
@@ -1872,6 +1901,9 @@ mod propchain_contracts {
             properties: Vec<PropertyMetadata>,
         ) -> Result<BatchResult, Error> {
             self.ensure_not_paused()?;
+            if properties.is_empty() {
+                return Err(Error::ValueOutOfBounds);
+            }
             self.validate_batch_size(properties.len())?;
 
             let caller = self.env().caller();
@@ -1892,11 +1924,11 @@ mod propchain_contracts {
                 }
 
                 // Validate metadata
-                if metadata.location.is_empty() {
+                if let Err(e) = Self::validate_metadata(&metadata) {
                     failures.push(BatchItemFailure {
                         index: i as u32,
                         item_id: 0,
-                        error: Error::InvalidMetadata,
+                        error: e,
                     });
                     continue;
                 }
@@ -1958,13 +1990,14 @@ mod propchain_contracts {
             to: AccountId,
         ) -> Result<(), Error> {
             self.ensure_not_paused()?;
-            self.validate_batch_size(property_ids.len())?;
-
             if property_ids.is_empty() {
-                return Ok(());
+                return Err(Error::ValueOutOfBounds);
             }
+            self.validate_batch_size(property_ids.len())?;
+            Self::ensure_not_zero_address(to)?;
 
             let caller = self.env().caller();
+            Self::ensure_not_self(caller, to)?;
 
             // Phase 1: Validate all properties (atomic — fail on first error)
             for &property_id in &property_ids {
@@ -2044,6 +2077,9 @@ mod propchain_contracts {
             updates: Vec<(u64, PropertyMetadata)>,
         ) -> Result<BatchResult, Error> {
             self.ensure_not_paused()?;
+            if updates.is_empty() {
+                return Err(Error::ValueOutOfBounds);
+            }
             self.validate_batch_size(updates.len())?;
 
             let caller = self.env().caller();
@@ -2082,11 +2118,11 @@ mod propchain_contracts {
                 }
 
                 // Validate metadata
-                if metadata.location.is_empty() {
+                if let Err(e) = Self::validate_metadata(&metadata) {
                     failures.push(BatchItemFailure {
                         index: i as u32,
                         item_id: property_id,
-                        error: Error::InvalidMetadata,
+                        error: e,
                     });
                     continue;
                 }
@@ -2136,13 +2172,16 @@ mod propchain_contracts {
             transfers: Vec<(u64, AccountId)>,
         ) -> Result<(), Error> {
             self.ensure_not_paused()?;
+            if transfers.is_empty() {
+                return Err(Error::ValueOutOfBounds);
+            }
             self.validate_batch_size(transfers.len())?;
 
-            if transfers.is_empty() {
-                return Ok(());
-            }
-
             let caller = self.env().caller();
+            for (_, to) in &transfers {
+                Self::ensure_not_zero_address(*to)?;
+                Self::ensure_not_self(caller, *to)?;
+            }
 
             // Phase 1: Validate all transfers (atomic)
             for (property_id, _) in &transfers {
@@ -2223,7 +2262,13 @@ mod propchain_contracts {
         #[ink(message)]
         pub fn approve(&mut self, property_id: u64, to: Option<AccountId>) -> Result<(), Error> {
             self.ensure_not_paused()?;
+            if let Some(account) = to {
+                Self::ensure_not_zero_address(account)?;
+            }
             let caller = self.env().caller();
+            if let Some(account) = to {
+                Self::ensure_not_self(caller, account)?;
+            }
             let property = self
                 .properties
                 .get(property_id)
@@ -2279,6 +2324,10 @@ mod propchain_contracts {
             amount: u128,
         ) -> Result<u64, Error> {
             self.ensure_not_paused()?;
+            Self::ensure_not_zero_address(buyer)?;
+            if amount == 0 {
+                return Err(Error::ValueOutOfBounds);
+            }
             let caller = self.env().caller();
             let property = self
                 .properties
@@ -2519,14 +2568,19 @@ mod propchain_contracts {
 
         /// Analytics: Gets properties within a price range
         #[ink(message)]
-        pub fn get_properties_by_price_range(&self, min_price: u128, max_price: u128) -> Vec<u64> {
+        pub fn get_properties_by_price_range(
+            &self,
+            min_price: u128,
+            max_price: u128,
+        ) -> Result<Vec<u64>, Error> {
+            if min_price > max_price {
+                return Err(Error::InvalidRange);
+            }
             let mut result = Vec::new();
 
-            // Optimized loop with pre-check to reduce iterations
             let mut i = 1u64;
             while i <= self.property_count {
                 if let Some(property) = self.properties.get(i) {
-                    // Unrolled condition check for better performance
                     let valuation = property.metadata.valuation;
                     if valuation >= min_price && valuation <= max_price {
                         result.push(property.id);
@@ -2535,19 +2589,24 @@ mod propchain_contracts {
                 i += 1;
             }
 
-            result
+            Ok(result)
         }
 
         /// Analytics: Gets properties by size range
         #[ink(message)]
-        pub fn get_properties_by_size_range(&self, min_size: u64, max_size: u64) -> Vec<u64> {
+        pub fn get_properties_by_size_range(
+            &self,
+            min_size: u64,
+            max_size: u64,
+        ) -> Result<Vec<u64>, Error> {
+            if min_size > max_size {
+                return Err(Error::InvalidRange);
+            }
             let mut result = Vec::new();
 
-            // Optimized loop with pre-check to reduce iterations
             let mut i = 1u64;
             while i <= self.property_count {
                 if let Some(property) = self.properties.get(i) {
-                    // Unrolled condition check for better performance
                     let size = property.metadata.size;
                     if size >= min_size && size <= max_size {
                         result.push(property.id);
@@ -2556,7 +2615,7 @@ mod propchain_contracts {
                 i += 1;
             }
 
-            result
+            Ok(result)
         }
 
         /// Helper method to track gas usage
@@ -2721,6 +2780,7 @@ mod propchain_contracts {
         /// Adds or removes a badge verifier (admin only)
         #[ink(message)]
         pub fn set_verifier(&mut self, verifier: AccountId, authorized: bool) -> Result<(), Error> {
+            Self::ensure_not_zero_address(verifier)?;
             let caller = self.env().caller();
             if !self.ensure_admin_rbac() {
                 return Err(Error::Unauthorized);
@@ -2760,6 +2820,12 @@ mod propchain_contracts {
             metadata_url: String,
         ) -> Result<(), Error> {
             self.ensure_not_paused()?;
+            Self::validate_url(&metadata_url)?;
+            if let Some(exp) = expires_at {
+                if exp <= self.env().block_timestamp() {
+                    return Err(Error::ValueOutOfBounds);
+                }
+            }
             let caller = self.env().caller();
 
             // Only verifiers can issue badges
@@ -2820,6 +2886,7 @@ mod propchain_contracts {
             reason: String,
         ) -> Result<(), Error> {
             self.ensure_not_paused()?;
+            Self::validate_string_length(&reason, propchain_traits::constants::MAX_REASON_LENGTH)?;
             let caller = self.env().caller();
 
             // Only verifiers or admin can revoke badges
@@ -2881,6 +2948,7 @@ mod propchain_contracts {
             evidence_url: String,
         ) -> Result<u64, Error> {
             self.ensure_not_paused()?;
+            Self::validate_url(&evidence_url)?;
             let caller = self.env().caller();
             let property = self
                 .properties
@@ -2950,6 +3018,7 @@ mod propchain_contracts {
             metadata_url: String,
         ) -> Result<(), Error> {
             self.ensure_not_paused()?;
+            Self::validate_url(&metadata_url)?;
             let caller = self.env().caller();
 
             if !self.is_verifier(caller) && caller != self.admin {
@@ -3018,6 +3087,7 @@ mod propchain_contracts {
             reason: String,
         ) -> Result<u64, Error> {
             self.ensure_not_paused()?;
+            Self::validate_string_length(&reason, propchain_traits::constants::MAX_REASON_LENGTH)?;
             let caller = self.env().caller();
             let property = self
                 .properties
@@ -3093,6 +3163,10 @@ mod propchain_contracts {
             resolution: String,
         ) -> Result<(), Error> {
             self.ensure_not_paused()?;
+            Self::validate_string_length(
+                &resolution,
+                propchain_traits::constants::MAX_REASON_LENGTH,
+            )?;
             let caller = self.env().caller();
 
             if !self.ensure_admin_rbac() {
@@ -3363,6 +3437,74 @@ mod propchain_contracts {
                 },
                 self.env().block_number(),
             ) || self.access_control.has_role(caller, Role::Admin)
+        }
+
+        // ====================================================================
+        // INPUT VALIDATION HELPERS (Issue #79)
+        // ====================================================================
+
+        /// Rejects the zero address (all 32 bytes == 0x00).
+        fn ensure_not_zero_address(account: AccountId) -> Result<(), Error> {
+            if account == AccountId::from([0x0; 32]) {
+                return Err(Error::ZeroAddress);
+            }
+            Ok(())
+        }
+
+        /// Validates that caller is not the same as the target.
+        fn ensure_not_self(caller: AccountId, target: AccountId) -> Result<(), Error> {
+            if caller == target {
+                return Err(Error::SelfTransferNotAllowed);
+            }
+            Ok(())
+        }
+
+        /// Full metadata validation using centralized constants.
+        fn validate_metadata(metadata: &PropertyMetadata) -> Result<(), Error> {
+            use propchain_traits::constants::*;
+
+            if metadata.location.is_empty() || metadata.legal_description.is_empty() {
+                return Err(Error::InvalidMetadata);
+            }
+            if metadata.location.len() as u32 > MAX_LOCATION_LENGTH {
+                return Err(Error::StringTooLong);
+            }
+            if metadata.legal_description.len() as u32 > MAX_LEGAL_DESCRIPTION_LENGTH {
+                return Err(Error::StringTooLong);
+            }
+            if metadata.size < MIN_PROPERTY_SIZE || metadata.size > MAX_PROPERTY_SIZE {
+                return Err(Error::ValueOutOfBounds);
+            }
+            if metadata.valuation < MIN_VALUATION {
+                return Err(Error::ValueOutOfBounds);
+            }
+            if metadata.documents_url.len() as u32 > MAX_URL_LENGTH {
+                return Err(Error::StringTooLong);
+            }
+            Ok(())
+        }
+
+        /// Validates a string field (reason, resolution) against a max length.
+        fn validate_string_length(s: &str, max_len: u32) -> Result<(), Error> {
+            if s.is_empty() {
+                return Err(Error::StringEmpty);
+            }
+            if s.len() as u32 > max_len {
+                return Err(Error::StringTooLong);
+            }
+            Ok(())
+        }
+
+        /// Validates a URL string is non-empty and within length limits.
+        fn validate_url(url: &str) -> Result<(), Error> {
+            use propchain_traits::constants::MAX_URL_LENGTH;
+            if url.is_empty() {
+                return Err(Error::StringEmpty);
+            }
+            if url.len() as u32 > MAX_URL_LENGTH {
+                return Err(Error::StringTooLong);
+            }
+            Ok(())
         }
     }
 }

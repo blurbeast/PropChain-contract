@@ -1,17 +1,16 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
+pub mod access_control;
 pub mod constants;
 pub mod errors;
-pub mod access_control;
 
+pub use access_control::*;
 pub use errors::*;
 use ink::prelude::string::String;
 use ink::primitives::AccountId;
-pub use errors::*;
-pub use access_control::*;
 
 /// Error types for the Property Valuation Oracle
-#[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, scale::Encode, scale::Decode)]
 #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
 pub enum OracleError {
     /// Property not found in the oracle system
@@ -36,6 +35,8 @@ pub enum OracleError {
     SourceAlreadyExists,
     /// Valuation request is still pending
     RequestPending,
+    /// Input batch exceeds the configured maximum size
+    BatchSizeExceeded,
 }
 
 impl core::fmt::Display for OracleError {
@@ -56,6 +57,7 @@ impl core::fmt::Display for OracleError {
             }
             OracleError::SourceAlreadyExists => write!(f, "Oracle source already registered"),
             OracleError::RequestPending => write!(f, "Valuation request is still pending"),
+            OracleError::BatchSizeExceeded => write!(f, "Batch size exceeds maximum allowed"),
         }
     }
 }
@@ -74,6 +76,7 @@ impl ContractError for OracleError {
             OracleError::InsufficientReputation => oracle_codes::ORACLE_INSUFFICIENT_REPUTATION,
             OracleError::SourceAlreadyExists => oracle_codes::ORACLE_SOURCE_ALREADY_EXISTS,
             OracleError::RequestPending => oracle_codes::ORACLE_REQUEST_PENDING,
+            OracleError::BatchSizeExceeded => 4012,
         }
     }
 
@@ -103,6 +106,9 @@ impl ContractError for OracleError {
             }
             OracleError::RequestPending => {
                 "A valuation request for this property is already pending"
+            }
+            OracleError::BatchSizeExceeded => {
+                "The number of items in the batch exceeds the configured maximum"
             }
         }
     }

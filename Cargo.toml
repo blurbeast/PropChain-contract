@@ -16,6 +16,12 @@ members = [
     "contracts/fractional",
     "contracts/prediction-market",
     "contracts/identity",
+    "contracts/governance",
+    "contracts/metadata",
+    "contracts/database",
+    "contracts/third-party",
+    "contracts/staking",
+    "contracts/governance",
 ]
 resolver = "2"
 

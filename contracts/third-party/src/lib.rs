@@ -20,167 +20,11 @@ use ink::storage::Mapping;
 mod propchain_third_party {
     use super::*;
 
-    // ========================================================================
-    // TYPES
-    // ========================================================================
+    // Data types extracted to types.rs (Issue #101)
+    include!("types.rs");
 
-    pub type ServiceId = u32;
-    pub type RequestId = u64;
-
-    // ========================================================================
-    // DATA STRUCTURES
-    // ========================================================================
-
-    /// Type of third-party service
-    #[derive(
-        Debug,
-        Clone,
-        PartialEq,
-        Eq,
-        scale::Encode,
-        scale::Decode,
-        ink::storage::traits::StorageLayout,
-    )]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub enum ServiceType {
-        /// KYC / AML Verification
-        KycProvider,
-        /// Fiat Payment Gateway
-        PaymentGateway,
-        /// Monitoring / Alerting
-        Monitoring,
-        /// Off-chain data oracle
-        DataOracle,
-        /// Document signing (e.g., DocuSign)
-        LegalSigning,
-        /// Tax calculation service
-        TaxService,
-        /// Other
-        Other,
-    }
-
-    /// Status of a service
-    #[derive(
-        Debug,
-        Clone,
-        PartialEq,
-        Eq,
-        scale::Encode,
-        scale::Decode,
-        ink::storage::traits::StorageLayout,
-    )]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub enum ServiceStatus {
-        Active,
-        Inactive,
-        Suspended,
-        Maintenance,
-    }
-
-    /// Configuration for a registered third-party service
-    #[derive(
-        Debug, Clone, PartialEq, scale::Encode, scale::Decode, ink::storage::traits::StorageLayout,
-    )]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub struct ServiceConfig {
-        pub service_id: ServiceId,
-        pub service_type: ServiceType,
-        pub name: String,
-        pub provider_account: AccountId,
-        pub endpoint_url: String,
-        pub api_version: String,
-        pub status: ServiceStatus,
-        pub registered_at: u64,
-        pub fees_collected: u128,
-        pub fee_percentage: u16, // In basis points (1 = 0.01%)
-    }
-
-    /// KYC Verification Request
-    #[derive(
-        Debug, Clone, PartialEq, scale::Encode, scale::Decode, ink::storage::traits::StorageLayout,
-    )]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub struct KycRequest {
-        pub request_id: RequestId,
-        pub user: AccountId,
-        pub service_id: ServiceId,
-        pub reference_id: String,
-        pub status: RequestStatus,
-        pub initiated_at: u64,
-        pub updated_at: u64,
-        pub expiry_date: Option<u64>,
-    }
-
-    /// Fiat Payment Request (bridging off-chain to on-chain)
-    #[derive(
-        Debug, Clone, PartialEq, scale::Encode, scale::Decode, ink::storage::traits::StorageLayout,
-    )]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub struct PaymentRequest {
-        pub request_id: RequestId,
-        pub payer: AccountId,
-        pub service_id: ServiceId,
-        pub target_contract: AccountId,
-        pub operation_type: u8, // e.g., 1=Purchase, 2=Escrow, 3=Fee
-        pub fiat_amount: u128,
-        pub fiat_currency: String,
-        pub equivalent_tokens: u128,
-        pub payment_reference: String,
-        pub status: RequestStatus,
-        pub init_time: u64,
-        pub complete_time: Option<u64>,
-    }
-
-    /// Request Status
-    #[derive(
-        Debug,
-        Clone,
-        PartialEq,
-        Eq,
-        scale::Encode,
-        scale::Decode,
-        ink::storage::traits::StorageLayout,
-    )]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub enum RequestStatus {
-        Pending,
-        Processing,
-        Approved,
-        Rejected,
-        Failed,
-        Expired,
-    }
-
-    /// KYC Status stored on-chain
-    #[derive(
-        Debug, Clone, PartialEq, scale::Encode, scale::Decode, ink::storage::traits::StorageLayout,
-    )]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub struct KycRecord {
-        pub user: AccountId,
-        pub provider_id: ServiceId,
-        pub verification_level: u8,
-        pub verified_at: u64,
-        pub expires_at: u64,
-        pub is_active: bool,
-    }
-
-    // ========================================================================
-    // ERRORS
-    // ========================================================================
-
-    #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
-    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
-    pub enum Error {
-        Unauthorized,
-        ServiceNotFound,
-        ServiceInactive,
-        RequestNotFound,
-        InvalidStatusTransition,
-        InvalidFeePercentage,
-        KycExpired,
-        PaymentProcessingFailed,
-    }
+    // Error types extracted to errors.rs (Issue #101)
+    include!("errors.rs");
 
     // ========================================================================
     // EVENTS
@@ -265,15 +109,15 @@ mod propchain_third_party {
         service_counter: ServiceId,
         /// Provider account to service ID mapped
         provider_services: Mapping<AccountId, Vec<ServiceId>>,
-        
+
         /// KYC records (User -> Record)
         kyc_records: Mapping<AccountId, KycRecord>,
         /// KYC requests
         kyc_requests: Mapping<RequestId, KycRequest>,
-        
+
         /// Payment requests
         payment_requests: Mapping<RequestId, PaymentRequest>,
-        
+
         /// Request counter
         request_counter: RequestId,
     }
@@ -337,9 +181,13 @@ mod propchain_third_party {
 
             self.services.insert(service_id, &config);
 
-            let mut provider_list = self.provider_services.get(provider_account).unwrap_or_default();
+            let mut provider_list = self
+                .provider_services
+                .get(provider_account)
+                .unwrap_or_default();
             provider_list.push(service_id);
-            self.provider_services.insert(provider_account, &provider_list);
+            self.provider_services
+                .insert(provider_account, &provider_list);
 
             self.env().emit_event(ServiceRegistered {
                 service_id,
@@ -432,10 +280,13 @@ mod propchain_third_party {
             valid_for_days: u64,
         ) -> Result<(), Error> {
             let caller = self.env().caller();
-            
-            let mut req = self.kyc_requests.get(request_id).ok_or(Error::RequestNotFound)?;
+
+            let mut req = self
+                .kyc_requests
+                .get(request_id)
+                .ok_or(Error::RequestNotFound)?;
             let service = self.get_service(req.service_id)?;
-            
+
             if caller != service.provider_account {
                 return Err(Error::Unauthorized);
             }
@@ -480,9 +331,9 @@ mod propchain_third_party {
         #[ink(message)]
         pub fn is_kyc_verified(&self, user: AccountId, required_level: u8) -> bool {
             if let Some(record) = self.kyc_records.get(user) {
-                if record.is_active 
-                    && record.verification_level >= required_level 
-                    && record.expires_at > self.env().block_timestamp() 
+                if record.is_active
+                    && record.verification_level >= required_level
+                    && record.expires_at > self.env().block_timestamp()
                 {
                     return true;
                 }
@@ -548,10 +399,13 @@ mod propchain_third_party {
             equivalent_tokens: u128,
         ) -> Result<(), Error> {
             let caller = self.env().caller();
-            
-            let mut req = self.payment_requests.get(request_id).ok_or(Error::RequestNotFound)?;
+
+            let mut req = self
+                .payment_requests
+                .get(request_id)
+                .ok_or(Error::RequestNotFound)?;
             let service = self.get_service(req.service_id)?;
-            
+
             if caller != service.provider_account {
                 return Err(Error::Unauthorized);
             }
@@ -560,7 +414,11 @@ mod propchain_third_party {
                 return Err(Error::InvalidStatusTransition);
             }
 
-            req.status = if success { RequestStatus::Approved } else { RequestStatus::Failed };
+            req.status = if success {
+                RequestStatus::Approved
+            } else {
+                RequestStatus::Failed
+            };
             req.equivalent_tokens = equivalent_tokens;
             req.complete_time = Some(self.env().block_timestamp());
 
@@ -589,8 +447,9 @@ mod propchain_third_party {
         ) -> Result<(), Error> {
             let caller = self.env().caller();
             let service = self.get_service(service_id)?;
-            
-            if caller != service.provider_account && service.service_type == ServiceType::Monitoring {
+
+            if caller != service.provider_account && service.service_type == ServiceType::Monitoring
+            {
                 return Err(Error::Unauthorized);
             }
 
@@ -642,7 +501,11 @@ mod propchain_third_party {
             self.services.get(service_id).ok_or(Error::ServiceNotFound)
         }
 
-        fn ensure_service_active(&self, service_id: ServiceId, expected_type: ServiceType) -> Result<(), Error> {
+        fn ensure_service_active(
+            &self,
+            service_id: ServiceId,
+            expected_type: ServiceType,
+        ) -> Result<(), Error> {
             let service = self.get_service(service_id)?;
             if service.status != ServiceStatus::Active {
                 return Err(Error::ServiceInactive);
@@ -664,95 +527,7 @@ mod propchain_third_party {
     // UNIT TESTS
     // ========================================================================
 
-    #[cfg(test)]
-    mod tests {
-        use super::*;
 
-        #[ink::test]
-        fn service_registration_works() {
-            let mut contract = ThirdPartyIntegration::new();
-            let provider = AccountId::from([0x01; 32]);
-            
-            let result = contract.register_service(
-                ServiceType::KycProvider,
-                String::from("Test KYC"),
-                provider,
-                String::from("https://api.testkyc.com"),
-                String::from("v1"),
-                0,
-            );
-            assert!(result.is_ok());
-            assert_eq!(result.unwrap(), 1);
-            
-            let service = contract.get_service_config(1).unwrap();
-            assert_eq!(service.name, "Test KYC");
-            assert_eq!(service.service_type, ServiceType::KycProvider);
-        }
-
-        #[ink::test]
-        fn kyc_flow_works() {
-            let mut contract = ThirdPartyIntegration::new();
-            let provider = AccountId::from([0x01; 32]);
-            // Needs to use caller to manipulate test state properly without accounts emulation
-            let caller = contract.admin; 
-            
-            contract.register_service(
-                ServiceType::KycProvider,
-                String::from("Test KYC"),
-                caller, // Make caller the provider for test ease
-                String::from("https://api.testkyc.com"),
-                String::from("v1"),
-                0,
-            ).unwrap();
-
-            let request_id = contract.initiate_kyc_request(1, caller, String::from("UID123")).unwrap();
-            
-            let result = contract.update_kyc_status(
-                request_id,
-                RequestStatus::Approved,
-                2, // level 2
-                365, // valid 1 year
-            );
-            assert!(result.is_ok());
-
-            assert!(contract.is_kyc_verified(caller, 1));
-            assert!(contract.is_kyc_verified(caller, 2));
-            assert!(!contract.is_kyc_verified(caller, 3));
-        }
-
-        #[ink::test]
-        fn payment_flow_works() {
-            let mut contract = ThirdPartyIntegration::new();
-            let caller = contract.admin; 
-            
-            contract.register_service(
-                ServiceType::PaymentGateway,
-                String::from("PayGate"),
-                caller, 
-                String::from("https://api.paygate.com"),
-                String::from("v1"),
-                0,
-            ).unwrap();
-
-            let target = AccountId::from([0x02; 32]);
-            let req_id = contract.initiate_fiat_payment(
-                1,
-                target,
-                1,
-                10000,
-                String::from("USD"),
-                String::from("REF123"),
-            ).unwrap();
-
-            let req1 = contract.get_payment_request(req_id).unwrap();
-            assert_eq!(req1.status, RequestStatus::Pending);
-
-            let result = contract.complete_payment(req_id, true, 50000);
-            assert!(result.is_ok());
-
-            let req2 = contract.get_payment_request(req_id).unwrap();
-            assert_eq!(req2.status, RequestStatus::Approved);
-            assert_eq!(req2.equivalent_tokens, 50000);
-        }
-    }
+    // Unit tests extracted to tests.rs (Issue #101)
+    include!("tests.rs");
 }

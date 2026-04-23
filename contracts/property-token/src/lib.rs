@@ -115,6 +115,16 @@ pub mod property_token {
         pub approved: bool,
     }
 
+    #[ink(event)]
+    pub struct BatchTransfer {
+        #[ink(topic)]
+        pub from: Option<AccountId>,
+        #[ink(topic)]
+        pub to: Option<AccountId>,
+        pub ids: Vec<TokenId>,
+        pub amounts: Vec<u128>,
+    }
+
     // --- Property Events ---
     #[ink(event)]
     pub struct PropertyTokenMinted {
@@ -581,7 +591,7 @@ pub mod property_token {
         }
 
         /// ERC-1155: Safely transfers tokens from one account to another
-        #[ink(message)]
+       #[ink(message)]
         pub fn safe_batch_transfer_from(
             &mut self,
             from: AccountId,
@@ -600,23 +610,30 @@ pub mod property_token {
                 return Err(Error::BatchSizeExceeded);
             }
 
-            // Verify lengths match
             if ids.len() != amounts.len() {
-                return Err(Error::Unauthorized); // Using this as a general error for mismatched arrays
+                return Err(Error::LengthMismatch);
             }
 
-            // Transfer each token
+            if ids.is_empty() {
+                return Err(Error::InvalidAmount);
+            }
+
+            // Validate all balances first (fail fast, no partial state)
+            for i in 0..ids.len() {
+                let from_balance = self.balances.get((&from, &ids[i])).unwrap_or(0);
+                if from_balance < amounts[i] {
+                    return Err(Error::InsufficientBalance);
+                }
+                if amounts[i] == 0 {
+                    return Err(Error::InvalidAmount);
+                }
+            }
+
+            // Execute all transfers
             for i in 0..ids.len() {
                 let token_id = ids[i];
                 let amount = amounts[i];
-
-                // Check balance
                 let from_balance = self.balances.get((&from, &token_id)).unwrap_or(0);
-                if from_balance < amount {
-                    return Err(Error::Unauthorized);
-                }
-
-                // Update balances
                 self.balances
                     .insert((&from, &token_id), &(from_balance - amount));
                 let to_balance = self.balances.get((&to, &token_id)).unwrap_or(0);
@@ -624,18 +641,16 @@ pub mod property_token {
                     .insert((&to, &token_id), &(to_balance + amount));
             }
 
-            // Emit transfer events for each token
-            for id in &ids {
-                self.env().emit_event(Transfer {
-                    from: Some(from),
-                    to: Some(to),
-                    id: *id,
-                });
-            }
+            // Single batch event instead of N individual events
+            self.env().emit_event(BatchTransfer {
+                from: Some(from),
+                to: Some(to),
+                ids,
+                amounts,
+            });
 
             Ok(())
         }
-
         /// ERC-1155: Returns the URI for a token
         #[ink(message)]
         pub fn uri(&self, token_id: TokenId) -> Option<String> {
@@ -2381,4 +2396,5 @@ pub mod property_token {
     }
 
     // Unit tests extracted to tests.rs (Issue #101)
+    include!("../tests.rs");
 }

@@ -115,7 +115,6 @@ mod propchain_fees {
         timestamp: u64,
     }
 
-
     impl FeeManager {
         #[ink(constructor)]
         pub fn new(base_fee: u128, min_fee: u128, max_fee: u128) -> Self {

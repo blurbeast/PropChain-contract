@@ -4,6 +4,7 @@
 // Existing modules
 // =========================================================================
 pub mod access_control;
+pub mod observer;
 pub mod constants;
 pub mod crypto;
 pub mod di;
@@ -11,6 +12,7 @@ pub mod errors;
 pub mod randomness;
 
 pub use access_control::*;
+pub use observer::*;
 pub use crypto::*;
 pub use di::*;
 pub mod i18n;
